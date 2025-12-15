@@ -21,7 +21,7 @@ class Encoder:
             cache_folder=CACHE_DIR,
             model_kwargs={"device": device},
         )
-
+    
 
 class FaissDb:
     def __init__(self, docs, embedding_function):
