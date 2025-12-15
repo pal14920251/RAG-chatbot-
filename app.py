@@ -12,10 +12,13 @@ FILES_DIR = os.path.normpath(
 st.title("LLM Chatbot RAG Assistant")
 
 
+
 @st.cache_resource
 def load_model():
-    model = ChatModel(model_id="google/gemma-2b-it", device="cuda")
+    # You can swap in any HF model ID you prefer
+    model = ChatModel(model_id="deepseek-ai/DeepSeek-R1")
     return model
+
 
 
 @st.cache_resource
