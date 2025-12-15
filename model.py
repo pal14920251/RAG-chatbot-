@@ -1,68 +1,85 @@
+
+from multiprocessing import context
 import os
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+import traceback
 from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
+from transformers import AutoTokenizer
 
-load_dotenv()
-
-
-CACHE_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models")
-)
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+load_dotenv(dotenv_path=env_path)
 
 
 class ChatModel:
-    def __init__(self, model_id: str = "google/gemma-2b-it", device="cuda"):
+    """
+    Chat model wrapper using Hugging Face Inference API.
+    """
 
-        ACCESS_TOKEN = os.getenv(
-            "ACCESS_TOKEN"
-        )  # reads .env file with ACCESS_TOKEN=<your hugging face access token>
+    def __init__(self, model_id: str = "deepseek-ai/DeepSeek-R1"):
+        """
+        Initialize the Hugging Face inference client.
+        Args:
+            model_id: Hugging Face model name that supports text generation/chat.
+                      (You can replace this with any other text-generation model)
+        """
+        self.hf_token = os.getenv("HF_API_TOKEN")
+        print("HF_API_TOKEN found?", bool(self.hf_token))
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_id, cache_dir=CACHE_DIR, token=ACCESS_TOKEN
-        )
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16
-        )
+        if not self.hf_token:
+            raise ValueError(
+                "HF_API_TOKEN not found in .env. Please add HF_API_TOKEN=your_token"
+            )
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            device_map="auto",
-            quantization_config=quantization_config,
-            cache_dir=CACHE_DIR,
-            token=ACCESS_TOKEN,
-        )
-        self.model.eval()
-        self.chat = []
-        self.device = device
+       
+        self.client = InferenceClient(model=model_id, token=self.hf_token)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, token=self.hf_token)
+        self.model_id = model_id
+
+
 
     def generate(self, question: str, context: str = None, max_new_tokens: int = 250):
+        if not question or question.strip() == "":
+            return "Please provide a valid question."
 
-        if context == None or context == "":
-            prompt = f"""Give a detailed answer to the following question. Question: {question}"""
+
+        if context:
+            prompt = f"""You are a helpful AI assistant.
+            Use the following context to answer the question.
+
+            Context: {context}
+            Question: {question}"""
         else:
-            prompt = f"""Using the information contained in the context, give a detailed answer to the question.
-Context: {context}.
-Question: {question}"""
+            prompt = f"""You are a helpful AI assistant.
+            Question: {question}"""
 
-        chat = [{"role": "user", "content": prompt}]
-        formatted_prompt = self.tokenizer.apply_chat_template(
-            chat,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        print(formatted_prompt)
-        inputs = self.tokenizer.encode(
-            formatted_prompt, add_special_tokens=False, return_tensors="pt"
-        ).to(self.device)
-        with torch.no_grad():
-            outputs = self.model.generate(
-                input_ids=inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-            )
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
-        response = response[len(formatted_prompt) :]  # remove input prompt from reponse
-        response = response.replace("<eos>", "")  # remove eos token
+        try:
+           
+            if "deepseek" in self.model_id.lower() or "chat" in self.model_id.lower():
+                response = self.client.chat_completion(
+                    model=self.model_id,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_new_tokens,
+                )
+            
+                if hasattr(response, "choices"):
+                    return response.choices[0].message["content"].strip()
+                elif isinstance(response, dict):
+                    return response["choices"][0]["message"]["content"].strip()
+                else:
+                    return str(response)
 
-        return response
+         
+            else:
+                response = self.client.text_generation(
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    stream=False
+                )
+                return response.strip() if response else " No response."
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return f" Error: {str(e)}"
+
+
+
